@@ -244,7 +244,7 @@
             width: 10px;
             height: 10px;
             margin-left: 8px;
-            border-radius: 0%; /* 丸いインジケーター */
+            border-radius: 50%; /* 丸いインジケーター */
         }
 
         .status-connected {
@@ -343,9 +343,8 @@
         let radarVisible = true;
         let currentCoordinates = null; // 現在の選択地点の緯度経度
 
-        // OpenWeatherMap API設定
-        const OPENWEATHER_API_KEY = '9ca05023ab69f12f379e8d7c36455b9d'; // ★ここにあなたのAPIキーを設定してください★
-        const OPENWEATHER_BASE_URL = 'https://api.openweathermap.org/data/2.5';
+        // OpenWeatherMap APIキーはNetlify Functions側で管理するため、ここでは削除します。
+        // フロントエンドから直接OpenWeatherMap APIを呼び出すことはしません。
 
         // 都道府県と都市のマッピング（初期選択肢と座標取得用）
         const prefectures = {
@@ -375,175 +374,32 @@
         };
 
         /**
-         * Nominatim APIを使って地名から緯度経度を取得します。
-         * @param {string} prefecture - 都道府県名 (例: '東京都')
-         * @param {string} city - 市区町村名 (例: '渋谷区')
-         * @returns {Promise<{lat: number, lon: number}>} 緯度経度オブジェクト
-         */
-        async function getCoordinates(prefecture, city) {
-            try {
-                // 市区町村が入力されていれば都道府県と結合、なければ都道府県単独で検索
-                const query = city.trim() !== '' ? `${prefecture} ${city}, Japan` : `${prefecture}, Japan`;
-                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
-                const data = await response.json();
-                
-                if (data.length > 0) {
-                    return {
-                        lat: parseFloat(data[0].lat),
-                        lon: parseFloat(data[0].lon)
-                    };
-                }
-                throw new Error('指定された地域の座標が見つかりませんでした。');
-            } catch (error) {
-                console.error('座標取得エラー:', error);
-                alert('指定された地域の座標が見つかりませんでした。東京の天気情報を表示します。');
-                return { lat: 35.6586, lon: 139.7454 }; // デフォルト座標（東京タワー付近）
-            }
-        }
-
-        /**
-         * OpenWeatherMap APIから現在の天気と予報データを取得します。
-         * @param {string} prefectureKey - 都道府県のキー (例: 'tokyo')
+         * Netlify Functionを介して天気データを取得します。
          * @param {string} prefectureName - 都道府県名 (例: '東京都')
          * @param {string} city - 市区町村名 (例: '渋谷区')
-         * @param {{lat: number, lon: number}} coordinates - 緯度経度
          * @returns {Promise<object>} 整形された天気データ
          */
-        async function fetchWeatherFromAPI(prefectureKey, prefectureName, city, coordinates) {
+        async function fetchWeatherFromFunction(prefectureName, city) {
             try {
-                // 現在の天気データ取得
-                const currentResponse = await fetch(
-                    `${OPENWEATHER_BASE_URL}/weather?lat=${coordinates.lat}&lon=${coordinates.lon}&appid=${OPENWEATHER_API_KEY}&units=metric&lang=ja`
-                );
-                const currentData = await currentResponse.json();
+                // Netlify Functionsのエンドポイントを呼び出す
+                // netlify.toml で設定したリダイレクトルール '/weather-api' を使用します
+                const response = await fetch(`/weather-api?prefecture=${encodeURIComponent(prefectureName)}&city=${encodeURIComponent(city)}`);
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTPエラーが発生しました。ステータスコード: ${response.status}`);
+                }
+
+                const data = await response.json();
                 
-                // 5日間予報 (3時間ごと) データ取得
-                const forecastResponse = await fetch(
-                    `${OPENWEATHER_BASE_URL}/forecast?lat=${coordinates.lat}&lon=${coordinates.lon}&appid=${OPENWEATHER_API_KEY}&units=metric&lang=ja`
-                );
-                const forecastData = await forecastResponse.json();
+                // Netlify Functionから返されたデータを直接使用
+                // 関数側でOpenWeatherMapからのデータ整形を行います
+                return data;
 
-                // 取得した予報データを整形
-                const processedForecasts = processForecastData(forecastData.list);
-
-                return {
-                    current: {
-                        temperature: Math.round(currentData.main.temp),
-                        condition: currentData.weather[0].icon,
-                        description: currentData.weather[0].description,
-                        humidity: currentData.main.humidity,
-                        windSpeed: Math.round(currentData.wind.speed * 10) / 10, // 小数点以下1桁
-                        pressure: currentData.main.pressure,
-                        visibility: Math.round(currentData.visibility / 1000), // mをkmに変換
-                        uvIndex: 0, // OpenWeatherMapのCurrent Weather APIにはUV指数がないためダミー
-                        feelsLike: Math.round(currentData.main.feels_like)
-                    },
-                    daily: processedForecasts.daily,    // 日ごとの予報（週間予報用）
-                    hourly: processedForecasts.hourly, // 3時間ごとの予報（12時間分）
-                    coordinates: coordinates,
-                    location: `${prefectureName}, ${city}`,
-                    lastUpdated: new Date().toLocaleString('ja-JP') // 最終更新時刻
-                };
             } catch (error) {
-                console.error('OpenWeatherMap APIエラー:', error);
-                throw new Error('天気データの取得に失敗しました。APIキーまたはネットワーク接続を確認してください。');
+                console.error('Netlify Function呼び出しエラー:', error);
+                throw new Error(`天気データの取得に失敗しました。<br>詳細: ${error.message}`);
             }
-        }
-
-        /**
-         * OpenWeatherMapから取得した予報リストを週間予報と3時間ごと予報に整形します。
-         * @param {Array<object>} forecastList - OpenWeatherMapのforecast APIから取得したリスト
-         * @returns {{daily: Array<object>, hourly: Array<object>}} 整形された予報データ
-         */
-        function processForecastData(forecastList) {
-            const dailyForecasts = {}; // 日ごとの最高・最低気温などを保持
-            const hourlyForecasts = []; // 3時間ごとの詳細予報を保持
-
-            const now = new Date();
-            now.setSeconds(0, 0); // 秒以下の情報をクリアし、比較を正確に
-
-            forecastList.forEach(item => {
-                const date = new Date(item.dt * 1000); // タイムスタンプをDateオブジェクトに変換
-                
-                // --- 週間予報データを処理 ---
-                const itemDateOnly = new Date(date);
-                itemDateOnly.setHours(0, 0, 0, 0); // その日の日付部分のみ取得
-
-                const dateKey = itemDateOnly.toDateString(); // 日付を識別するためのキー
-                if (!dailyForecasts[dateKey]) {
-                    // その日の最初のデータであれば初期化
-                    dailyForecasts[dateKey] = {
-                        // ソートの信頼性を高めるため、完全なDateオブジェクトを格納
-                        fullDate: itemDateOnly,
-                        date: date.toLocaleDateString('ja-JP', {month: 'short', day: 'numeric', weekday: 'short'}),
-                        high: -Infinity, // 最高気温の初期値
-                        low: Infinity,    // 最低気温の初期値
-                        condition: item.weather[0].icon, // 代表的な天気アイコン
-                        precipitation: 0 // 降水確率の初期値
-                    };
-                }
-                // その日の最高・最低気温を更新
-                dailyForecasts[dateKey].high = Math.max(dailyForecasts[dateKey].high, Math.round(item.main.temp_max));
-                dailyForecasts[dateKey].low = Math.min(dailyForecasts[dateKey].low, Math.round(item.main.temp_min));
-                
-                // その日の降水確率（0でなければ更新）
-                // 同じ日の複数の予報で降水確率がある場合、最大値を採用することも検討
-                if (dailyForecasts[dateKey].precipitation === 0 && item.pop > 0) {
-                    dailyForecasts[dateKey].precipitation = Math.round((item.pop || 0) * 100);
-                }
-
-
-                // --- 3時間ごとの予報データを処理 ---
-                // 現在時刻以降のデータのみを対象とする (OpenWeatherMap APIは未来のデータしか返さないので、実際には常に満たされる)
-                if (date.getTime() >= now.getTime()) { // Dateオブジェクトの直接比較ではなくgetTime()で比較する方が確実
-                    hourlyForecasts.push({
-                        time: date.toLocaleTimeString('ja-JP', {hour: '2-digit', minute:'2-digit'}), // 時刻のみ
-                        date: date.toLocaleDateString('ja-JP', {month: 'short', day: 'numeric', weekday: 'short'}), // 参考用
-                        temp: Math.round(item.main.temp),
-                        condition: item.weather[0].icon,
-                        description: item.weather[0].description,
-                        precipitation: Math.round((item.pop || 0) * 100)
-                    });
-                }
-            });
-
-            // 週間予報を日付順にソート (fullDateプロパティを使用)
-            const sortedDailyForecasts = Object.values(dailyForecasts)
-                .sort((a, b) => a.fullDate - b.fullDate);
-            
-            // 3時間ごとの予報も時刻順にソート (APIから既にソートされていることが多いが念のため)
-            hourlyForecasts.sort((a, b) => {
-                // 'a.date'と'a.time'が正しくフォーマットされ、有効な日付/時刻文字列であると仮定
-                // 例: "6月26日(木) 09:00" は、信頼性の高いDateオブジェクトを作成するために年情報が必要。
-                // hourlyForecastsに直接ソート可能なタイムスタンプまたはDateオブジェクトを格納する方が良い。
-                // とりあえず、'date'と'time'が一貫していれば、単純なケースでは機能するかもしれない。
-                // より堅牢な解決策は、hourlyForecastsにプッシュする際に'dt'または'fullDateTime'を直接追加すること。
-                
-                // より堅牢な比較のため、'date'が「M月D日(曜)」形式、'time'が「HH:MM」形式と仮定
-                // 年を推測する必要がある。簡略化のため、年をまたがない限り現在の年と仮定。
-                const year = new Date().getFullYear();
-                const parseDateString = (dateStr, timeStr) => {
-                    const parts = dateStr.match(/(\d{1,2})月(\d{1,2})日/);
-                    if (!parts) return null;
-                    const month = parseInt(parts[1]) - 1; // 月は0から始まるインデックス
-                    const day = parseInt(parts[2]);
-                    return new Date(year, month, day, parseInt(timeStr.substring(0, 2)), parseInt(timeStr.substring(3, 5)));
-                };
-
-                const dateTimeA = parseDateString(a.date, a.time);
-                const dateTimeB = parseDateString(b.date, b.time);
-
-                if (dateTimeA && dateTimeB) {
-                    return dateTimeA.getTime() - dateTimeB.getTime();
-                }
-                return 0; // 解析失敗時のフォールバック
-            });
-
-
-            return {
-                daily: sortedDailyForecasts.slice(0, 7), // 週間予報は最大7日分
-                hourly: hourlyForecasts.slice(0, 4) // 3時間ごと予報は直近4つのデータ（12時間分）
-            };
         }
 
         /**
@@ -552,9 +408,9 @@
          */
         async function updateWeather() {
             try {
-                const prefecture = document.getElementById('prefecture').value;
+                const prefectureKey = document.getElementById('prefecture').value; // 'tokyo'など
+                const prefectureName = prefectures[prefectureKey]; // '東京都'
                 const city = document.getElementById('city').value;
-                const prefectureName = prefectures[prefecture];
                 
                 // UIをローディング表示に切り替える
                 document.getElementById('current-weather').innerHTML = '<div class="loading">現在の天気情報を読み込み中...</div>';
@@ -570,15 +426,13 @@
                     radarMapWrapper.appendChild(radarOverlay);
                 }
 
-
                 // 接続状態インジケーターを「接続中」に
                 document.querySelector('.status-indicator').className = 'status-indicator status-connected';
                 
-                // 天気データ取得
-                const coordinates = await getCoordinates(prefectureName, city);
-                const apiData = await fetchWeatherFromAPI(prefecture, prefectureName, city, coordinates);
+                // 天気データ取得 (Netlify Function経由)
+                const apiData = await fetchWeatherFromFunction(prefectureName, city);
                 weatherData = apiData; // 取得したデータをグローバル変数に保存
-                currentCoordinates = coordinates; // 取得した座標を保存
+                currentCoordinates = apiData.coordinates; // 取得した座標を保存
 
                 // UIの表示を更新
                 displayCurrentWeather(weatherData);
@@ -621,12 +475,14 @@
             if (radarVisible && coordinates) {
                 // iframeでOpenStreetMapの埋め込み地図を表示
                 // bboxの範囲を調整して、より広い範囲が見えるようにすることも可能
+                // ズームレベルを調整して、適切な範囲が表示されるように bbox の値を調整
+                const zoomFactor = 0.07; // この値を小さくするとズームイン、大きくするとズームアウト
                 radarMapWrapper.innerHTML = `
                     <iframe 
                         width="100%" 
                         height="100%" 
                         style="border: none;"
-                        src="https://www.openstreetmap.org/export/embed.html?bbox=${coordinates.lon-0.1},${coordinates.lat-0.07},${coordinates.lon+0.1},${coordinates.lat+0.07}&layer=mapnik&marker=${coordinates.lat},${coordinates.lon}"
+                        src="https://www.openstreetmap.org/export/embed.html?bbox=${coordinates.lon - zoomFactor},${coordinates.lat - zoomFactor},${coordinates.lon + zoomFactor},${coordinates.lat + zoomFactor}&layer=mapnik&marker=${coordinates.lat},${coordinates.lon}"
                         allowfullscreen>
                     </iframe>
                     <div style="position: absolute; bottom: 10px; left: 10px; background: rgba(255,255,255,0.9); padding: 5px; font-size: 12px; border-radius: 3px;">
@@ -648,9 +504,9 @@
          */
         function toggleRadar() {
             radarVisible = !radarVisible;
-            const prefecture = document.getElementById('prefecture').value;
+            const prefectureKey = document.getElementById('prefecture').value;
+            const prefectureName = prefectures[prefectureKey];
             const city = document.getElementById('city').value;
-            const prefectureName = prefectures[prefecture];
             
             if (currentCoordinates) {
                 // 既に取得済みの座標で地図を更新
@@ -695,8 +551,7 @@
                     </div>
                     <div class="detail-item">
                         <span>UV指数</span>
-                        <span>${weather.uvIndex}</span>
-                    </div>
+                        <span>${weather.uvIndex || 'N/A'}</span> </div>
                     <div class="detail-item">
                         <span>最終更新</span>
                         <span>${data.lastUpdated}</span>
