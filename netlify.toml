@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 [build]
   # サーバーレス関数のコードが置かれているディレクトリを指定します。
   # この例では、リポジトリのルートにある 'netlify/functions' フォルダです。
@@ -15,4 +16,23 @@
 [[redirects]]
   from = "/weather-api" 
   to = "/.netlify/functions/get-weather" 
+=======
+[build]
+  # サーバーレス関数のコードが置かれているディレクトリを指定します。
+  # この例では、リポジトリのルートにある 'netlify/functions' フォルダです。
+  functions = "netlify/functions"
+  
+  # 静的サイトの公開ディレクトリを指定します。
+  # '.' はリポジトリのルートディレクトリを意味します。
+  # あなたの index.html がルートにある場合、これでOKです。
+  publish = "."                  
+
+# リダイレクトルールを定義します。
+# これにより、フロントエンド（ブラウザ）から '/weather-api' にアクセスすると、
+# 内部的にサーバーレス関数 '/.netlify/functions/get-weather' が呼び出されます。
+# APIキーがURLに露出するのを防ぐために推奨されます。
+[[redirects]]
+  from = "/weather-api" 
+  to = "/.netlify/functions/get-weather" 
+>>>>>>> a3a543f4b22fa6d4d111832b99df56c71ff4f066
   status = 200 # 成功レスポンスとして返す
